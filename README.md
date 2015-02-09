@@ -1,6 +1,30 @@
 # putsh
 
-avoid orchestration.
+avoid orchestration by reversing the polairty of your infrastructure.
+
+## todo
+
+* putsh-connect needs to connect multiple sockets
+ * a configurable number
+ * how do we test that??
+  * that more than one socket is being used?
+
+
+## where we are right now
+
+we have both ends of putsh coded
+
+* putsh-connect connects a client websockets to putsh-server
+* lb is a load balancer wrapper, something to get requests from a downstream lb
+* lb-http-request is a dummy function to send http requests to lb
+* appserv-handler is a fake app serv
+* we have a test mode that:
+ * sets up the fake appserv
+ * sets up putsh from the appserv to a load balancer
+ * fires a request at the load balancer
+ * shows that the request comes back via the fake appserv
+ 
+## how it works
 
 * putsh/a
  * listen to 2 sockets, x and y
@@ -19,31 +43,6 @@ avoid orchestration.
   * make a connection to p
   * send the data there
  * p is presumed to be a backend server
-
-## how it works
-
-Channel defines the following contract:
-
-* open?: Returns true iff channel is open.
-* close: Closes the channel. Idempotent: returns true if the channel
-  was actually closed, or false if it was already closed.
-* websocket?: Returns true iff channel is a WebSocket.
-* send!: Sends data to client and returns true if the data was
-  successfully written to the output queue, or false if the channel is
-  closed. Normally, checking the returned value is not needed. This
-  function returns immediately (does not block).
-* Data is sent directly to the client, NO RING MIDDLEWARE IS APPLIED.
-* Data form: {:headers _ :status _ :body _} or just body. Note that
-  :headers and :status will be stripped for WebSockets and for HTTP
-  streaming responses after the first.
-* on-receive: Sets handler (fn [message-string || byte[]) for
-  notification of client WebSocket messages. Message ordering is
-  guaranteed by server.
-* on-close: Sets handler (fn [status]) for notification of channel
-  being closed by the server or client. Handler will be invoked at
-  most once. Useful for clean-up. 
- * Status can be `:normal`, `:going-away`, `:protocol-error`,
-  `:unsupported`, `:unknown`, `:server-close`, `:client-close`
 
 
 ## Installation
