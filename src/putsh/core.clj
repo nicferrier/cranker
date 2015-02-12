@@ -8,7 +8,6 @@
   (:require [gniazdo.core :as ws])
   (:require [clojure.data.json :as json])
   (:require [clojure.walk])
-  (:require [clojure.string :as str])
   (:require [org.httpkit.server :as http-server]))
 
 (def channels
@@ -76,6 +75,15 @@ load balancer." [request]
            ;; else
            (println "whoops! putsh-server received without an lb channel")))))))
 
+(defn putsh-make-ws [chan endpoint]
+  (let [socket (promise)]
+    (deliver
+     socket
+     (ws/connect
+      endpoint
+      :on-receive (fn [data] (thread (>!! chan [@socket data])))))
+    @socket))
+
 (defn putsh-connect
   "The app server side of putsh.
 
@@ -86,10 +94,9 @@ load balancer." [request]
 `n' - the number of connections to open to the putsh server."
   [putsh-lb app-server-uri]
   (let [ch (chan)
-        ws-receiver (fn [data] (thread (>!! ch data)))
-        socket (ws/connect putsh-lb :on-receive ws-receiver)]
+        sockets (map (fn [n] (putsh-make-ws ch putsh-lb)) (range 10))]
     (go-loop
-     [data (<! ch)] ;; data is the http request
+     [[socket data] (<! ch)] ;; data is the http request
      (let [request (try (json/read-str data) (catch Exception e { :json-error e }))
            { err :json-error http-request :http-request } request]
        (if err
@@ -97,15 +104,16 @@ load balancer." [request]
          ;; else it's a request
          (let [{ uri :uri headers :headers } http-request
                ;; need to test if app-server-uri ends in /
-               request-uri (str/join app-server-uri (or uri "/"))]
+               request-uri (str app-server-uri (or uri "/"))]
            (http-client/get
-            request-uri { :headers headers :timeout 200 }
-            (fn [{:keys [status headers body error]}]
+            request-uri
+            { :headers headers :timeout 200 }
+            (fn [{ :keys [status headers body error] }]
               (let [out-frame { :status status :headers headers :body body }]
                 (ws/send-msg socket (json/write-str out-frame)))))))
        (recur (<! ch))))
     (Thread/sleep 5000)
-    (ws/close socket)))
+    (map #(ws/close %) sockets)))
 
 (defn lb-http-request
   "Make a request to the fake load balancer.
@@ -141,12 +149,14 @@ tests of putsh flow internally." [req]
         lb-stop (http-server/run-server lb { :port 8001 })
         fake-appserver-stop (http-server/run-server appserv-handler { :port 8003 })]
     ;;(log.log "started")
-    ;; Show that the direct request works 
-    (thread (lb-http-request "http://localhost:8003/blah" "direct"))
     ;; Connect the app-server proxy to the lb proxy
     (thread (putsh-connect "ws://localhost:8000" "http://localhost:8003"))
-    ;; Show that a putch request works
-    (thread (lb-http-request "http://localhost:8001/blah" "putsh"))
+    ;; Tests
+    (thread
+     ;; Show that the direct request works 
+     (lb-http-request "http://localhost:8003/blah" "direct")
+     ;; Show that a putch request works
+     (lb-http-request "http://localhost:8001/blah" "putsh"))
     (Thread/sleep 8000)
     (lb-stop)
     (putsh-stop)
