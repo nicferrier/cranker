@@ -122,7 +122,7 @@ This is test code to allow us to run all our tests internally."
   [address method]
   (Thread/sleep 1000)
   (let [response @(http-client/get address)
-        { status :status headers :headers body :body } response]
+        { :keys [status headers body] } response]
     (println (format "lb-request[%s][status]: %s" method status))
     (println (format "lb-request[%s][headers]: %s" method headers))
     (println (format "lb-request[%s][body]: %s" method body))))
