@@ -137,11 +137,11 @@ tests of putsh flow internally." [req]
     (http-server/on-receive
      channel (fn [data]
                (println "ooer! data from an appserv con: " data)))
-    (http-server/send!
-     channel { :status 200
-              :headers { "content-type" "text/html"
-                         "server" "fake-appserver-0.0.1" }
-              :body "<h1>my fake appserver!</h1>" })))
+    (let [response { :status 200
+                    :headers { "content-type" "text/html"
+                               "server" "fake-appserver-0.0.1" }
+                    :body "<h1>my fake appserver!</h1>" }]
+      (http-server/send! channel response))))
 
 (defn -main
   "Start putsh." [& args]
