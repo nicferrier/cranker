@@ -3,7 +3,7 @@
   (:require
    [clojure.core.async
     :refer [>! <! >!! <!! go go-loop chan close!  alts! alts!! timeout thread]])
-  ;;(:require [clojure.tools.logging :as log])
+  (:require [clojure.tools.logging :as log])
   (:require [org.httpkit.client :as http-client])
   (:require [gniazdo.core :as ws])
   (:require [clojure.data.json :as json])
