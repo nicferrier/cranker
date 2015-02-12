@@ -60,28 +60,27 @@ channel established by `putsh-server'." [request]
 A websocket is established from the app-server side. Any data we
 receive on it is the response from a request we made on behalf of the
 load balancer." [request]
-  (http-server/with-channel request channel
-    (dosync (alter channels assoc channel nil))
-    (http-server/on-close ; remove the socket on close - we should start a new one?
-     channel (fn [status] (dosync (alter channels dissoc channel))))
-    (http-server/on-receive
-     channel
-     (fn [data]    ; Send the data back to the load balancer
-       (let [lb-channel (@channels channel)]
-         (if lb-channel
-           (let [response-json (json/read-str data :key-fn keyword)
-                 response (de-frame response-json)]
-             (http-server/send! lb-channel response))
-           ;; else
-           (println "whoops! putsh-server received without an lb channel")))))))
+(http-server/with-channel request channel
+  (log/info "got a websocket")
+  (dosync (alter channels assoc channel nil))
+  (http-server/on-close ; remove the socket on close - we should start a new one?
+   channel (fn [status] (dosync (alter channels dissoc channel))))
+  (http-server/on-receive
+   channel
+   (fn [data]    ; Send the data back to the load balancer
+     (let [lb-channel (@channels channel)]
+       (if lb-channel
+         (let [response-json (json/read-str data :key-fn keyword)
+               response (de-frame response-json)]
+           (http-server/send! lb-channel response))
+         ;; else
+         (println "whoops! putsh-server received without an lb channel")))))))
 
 (defn putsh-make-ws [chan endpoint]
-  (let [socket (promise)]
-    (deliver
-     socket
-     (ws/connect
-      endpoint
-      :on-receive (fn [data] (thread (>!! chan [@socket data])))))
+  (let [socket (promise)
+        callback (fn [data]
+                   (thread (>!! chan [@socket data])))]
+    (deliver socket (ws/connect endpoint :on-receive callback))
     @socket))
 
 (defn putsh-connect
@@ -91,10 +90,14 @@ load balancer." [request]
 
 `app-server-uri' which is the uri of the app server.
 
-`n' - the number of connections to open to the putsh server."
-  [putsh-lb app-server-uri]
+`number' - the number of connections to open to the putsh server."
+  [app-server-uri putsh-lb number]
   (let [ch (chan)
-        sockets (map (fn [n] (putsh-make-ws ch putsh-lb)) (range 10))]
+        sockets (doall
+                 (map (fn [n]
+                        (println "number " n)
+                        (putsh-make-ws ch putsh-lb))
+                      (range number)))]
     (go-loop
      [[socket data] (<! ch)] ;; data is the http request
      (let [request (try (json/read-str data) (catch Exception e { :json-error e }))
@@ -113,14 +116,13 @@ load balancer." [request]
                 (ws/send-msg socket (json/write-str out-frame)))))))
        (recur (<! ch))))
     (Thread/sleep 5000)
-    (map #(ws/close %) sockets)))
+    (doall (map #(ws/close %) sockets))))
 
 (defn lb-http-request
   "Make a request to the fake load balancer.
 
 This is test code to allow us to run all our tests internally."
   [address method]
-  (Thread/sleep 1000)
   (let [response @(http-client/get address)
         { :keys [status headers body] } response]
     (println (format "lb-request[%s][status]: %s" method status))
@@ -150,9 +152,13 @@ tests of putsh flow internally." [req]
         fake-appserver-stop (http-server/run-server appserv-handler { :port 8003 })]
     ;;(log.log "started")
     ;; Connect the app-server proxy to the lb proxy
-    (thread (putsh-connect "ws://localhost:8000" "http://localhost:8003"))
+    (thread
+     (putsh-connect
+      "http://localhost:8003"
+      "ws://localhost:8000" 2))
     ;; Tests
     (thread
+     (Thread/sleep 1000)
      ;; Show that the direct request works 
      (lb-http-request "http://localhost:8003/blah" "direct")
      ;; Show that a putch request works
