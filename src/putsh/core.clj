@@ -3,7 +3,8 @@
   (:require
    [clojure.core.async
     :refer [>! <! >!! <!! go go-loop chan close!  alts! alts!! timeout thread]])
-  (:require [clojure.tools.logging :as log])
+  ;;(:require [clojure.tools.logging :as log])
+  (:require [taoensso.timbre :as timbre :refer (debug log info warn error fatal)])
   (:require [org.httpkit.client :as http-client])
   (:require [gniazdo.core :as ws])
   (:require [clojure.data.json :as json])
@@ -61,7 +62,7 @@ A websocket is established from the app-server side. Any data we
 receive on it is the response from a request we made on behalf of the
 load balancer." [request]
 (http-server/with-channel request channel
-  (log/info "got a websocket")
+  (debug "got a websocket")
   (dosync (alter channels assoc channel nil))
   (http-server/on-close ; remove the socket on close - we should start a new one?
    channel (fn [status] (dosync (alter channels dissoc channel))))
@@ -94,10 +95,7 @@ load balancer." [request]
   [app-server-uri putsh-lb number]
   (let [ch (chan)
         sockets (doall
-                 (map (fn [n]
-                        (println "number " n)
-                        (putsh-make-ws ch putsh-lb))
-                      (range number)))]
+                 (map (fn [n] (putsh-make-ws ch putsh-lb)) (range number)))]
     (go-loop
      [[socket data] (<! ch)] ;; data is the http request
      (let [request (try (json/read-str data) (catch Exception e { :json-error e }))
@@ -121,13 +119,30 @@ load balancer." [request]
 (defn lb-http-request
   "Make a request to the fake load balancer.
 
-This is test code to allow us to run all our tests internally."
-  [address method]
+This is test code to allow us to run all our tests internally.
+
+`address' is the http address to talk to.
+
+`status', `headers' and `body-regex' are values to use to do
+assertions on. If present the assertions are performed."
+  [address &{ :keys [status-assert
+                     headers-assert
+                     body-regex-assert]}]
   (let [response @(http-client/get address)
         { :keys [status headers body] } response]
-    (println (format "lb-request[%s][status]: %s" method status))
-    (println (format "lb-request[%s][headers]: %s" method headers))
-    (println (format "lb-request[%s][body]: %s" method body))))
+    (info (format "lb-request[%s][status]: %s" address status))
+    (info (format "lb-request[%s][headers]: %s" address headers))
+    (info (format "lb-request[%s][body]: %s" address body))
+    (do
+      (when status-assert
+        (assert (== status-assert status)))
+      (when headers-assert
+        (doall (map (fn [[k v]]
+                      (when (headers k)
+                        (assert (= (headers k) v))))
+                    headers-assert)))
+      (when body-regex-assert
+        (assert (re-matches body-regex-assert body))))))
 
 (defn appserv-handler
   "Handle requests from putsh as if we are an app server.
