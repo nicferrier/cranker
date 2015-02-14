@@ -164,24 +164,29 @@ tests of putsh flow internally." [req]
   "Start putsh." [& args]
   (let [putsh-stop (http-server/run-server putsh-server { :port 8000 })
         lb-stop (http-server/run-server lb { :port 8001 })
-        fake-appserver-stop (http-server/run-server appserv-handler { :port 8003 })]
-    ;;(log.log "started")
+        tests true]
     ;; Connect the app-server proxy to the lb proxy
     (thread
      (putsh-connect
       "http://localhost:8003"
-      "ws://localhost:8000" 2))
+      "ws://localhost:8000" 10))
     ;; Tests
-    (thread
-     (Thread/sleep 1000)
-     ;; Show that the direct request works 
-     (lb-http-request "http://localhost:8003/blah" "direct")
-     ;; Show that a putch request works
-     (lb-http-request "http://localhost:8001/blah" "putsh"))
-    (Thread/sleep 8000)
+    (when tests
+      (let [fake-appserver-stop (http-server/run-server appserv-handler { :port 8003 })]
+        (thread
+         (Thread/sleep 1000)
+         ;; Show that the direct request works 
+         (lb-http-request
+          "http://localhost:8003/blah"
+          :status-assert 200
+          :headers-assert { :server "http-kit" }
+          :body-regex-assert #"<h1>my fake.*")
+         ;; Show that a putch request works
+         (lb-http-request "http://localhost:8001/blah"))
+        (Thread/sleep 8000)
+        (fake-appserver-stop)))
     (lb-stop)
     (putsh-stop)
-    (fake-appserver-stop)
-    (println "stopped.")))
+    (info "stopped.")))
 
 ;; Ends
