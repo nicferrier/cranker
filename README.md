@@ -4,11 +4,10 @@ avoid orchestration by reversing the polairty of your infrastructure.
 
 ## todo
 
-* putsh-connect needs to connect multiple sockets
- * a configurable number
- * how do we test that??
-  * that more than one socket is being used?
-
+* need to test sending a bunch of data
+* the load balancer side and the app server side need to start independently
+* we need to be able to turn the test mode on
+* the app server side needs to wait
 
 ## where we are right now
 
