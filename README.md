@@ -1,6 +1,6 @@
-# cranker
+# Cranker
 
-avoid orchestration by reversing the polairty of your infrastructure.
+Avoid orchestration by reversing the polairty of your infrastructure.
 
 ## todo
 
@@ -8,45 +8,46 @@ avoid orchestration by reversing the polairty of your infrastructure.
 * the load balancer side and the app server side need to start independently
 * we need to be able to turn the test mode on
 * the app server side needs to wait
-
+* implement HTTP proxying better
+ * adding proxy header in correct circumstances
+ 
 ## where we are right now
 
-we have both ends of putsh coded
+We have both ends of cranker coded
 
-* cranker-connect connects a client websockets to putsh-server
-* lb is a load balancer wrapper, something to get requests from a downstream lb
-* lb-http-request is a dummy function to send http requests to lb
-* appserv-handler is a fake app serv
+* lb-server and cranker-server implement the load balancer end
+ * start-lb starts both the servers
+ * both servers need an address but default to
+  * 8000 - cranker-server (websockets)
+  * 8001 - load balancer proxy
+* cranker-connector implements the app server side
+ * it needs the app-server address ...
+ * ... and the address of the cranker server
 * we have a test mode that:
- * sets up the fake appserv
- * sets up cranker from the appserv to a load balancer
+ * sets up a fake appserv on 8003
+ * sets up cranker-connector from the appserv to a load balancer
  * fires a request at the load balancer
  * shows that the request comes back via the fake appserv
  
 ## how it works
 
-* cranker/a
+* cranker/a runs near your load balancer - there should be 1 of this
  * listen to 2 sockets, x and y
  * receive connections from the load balancer on x
-  * these will arrive as and when, probably not in one go
  * receive connections from cranker/b on y
   * these will arrive in lumps
- * we need to keep the cranker/b sockets open 
-  * and send data back through them
-  * when data arrives from the load balancer
-* cranker/b
- * make connections in 2 different directions, o and p
- * start by making 10 connections to o
- * o is presumed to be a cranker/a
- * when data arrives on one of the connections
-  * make a connection to p
-  * send the data there
- * p is presumed to be a backend server
+  * when a cranker-connector starts it tries to connect a lot of sockets
+* cranker/b runs near your app server
+ * makes websockets to cranker/a
+ * what comes over the websocket is encoded HTTP requests from the load balancer
+ * proxy the request to the app server
+ * return the response encoded over the websocket
 
 
 ## Installation
 
 Download from http://example.com/FIXME.
+
 
 ## Usage
 
@@ -54,9 +55,6 @@ FIXME: explanation
 
     $ java -jar cranker-0.1.0-standalone.jar [args]
 
-## Options
-
-FIXME: listing of options this app accepts.
 
 ## Examples
 
@@ -66,9 +64,6 @@ FIXME: listing of options this app accepts.
 
 ...
 
-### Any Other Sections
-### That You Think
-### Might be Useful
 
 ## License
 
