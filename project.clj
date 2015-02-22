@@ -1,5 +1,5 @@
-(defproject putsh "0.1.0-SNAPSHOT"
-  :description "FIXME: write description"
+(defproject cranker "0.1.0-SNAPSHOT"
+  :description "Connect HTTP in reverse to scale."
   :url "http://example.com/FIXME"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
@@ -10,6 +10,8 @@
                  [stylefruits/gniazdo "0.3.0"]
                  [org.clojure/data.json "0.2.5"]
                  [http-kit "2.1.6"]]
-  :main ^:skip-aot putsh.core
+  ;;:main ^:skip-aot cranker.core
+  :main cranker.core
   :target-path "target/%s"
-  :profiles {:uberjar {:aot :all}})
+  :aot :all
+  :profiles {:uberjar {:aot :all} })
