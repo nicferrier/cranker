@@ -1,4 +1,4 @@
-# putsh
+# cranker
 
 avoid orchestration by reversing the polairty of your infrastructure.
 
@@ -13,31 +13,31 @@ avoid orchestration by reversing the polairty of your infrastructure.
 
 we have both ends of putsh coded
 
-* putsh-connect connects a client websockets to putsh-server
+* cranker-connect connects a client websockets to putsh-server
 * lb is a load balancer wrapper, something to get requests from a downstream lb
 * lb-http-request is a dummy function to send http requests to lb
 * appserv-handler is a fake app serv
 * we have a test mode that:
  * sets up the fake appserv
- * sets up putsh from the appserv to a load balancer
+ * sets up cranker from the appserv to a load balancer
  * fires a request at the load balancer
  * shows that the request comes back via the fake appserv
  
 ## how it works
 
-* putsh/a
+* cranker/a
  * listen to 2 sockets, x and y
  * receive connections from the load balancer on x
   * these will arrive as and when, probably not in one go
- * receive connections from putsh/b on y
+ * receive connections from cranker/b on y
   * these will arrive in lumps
- * we need to keep the putsh/b sockets open 
+ * we need to keep the cranker/b sockets open 
   * and send data back through them
   * when data arrives from the load balancer
-* putsh/b
+* cranker/b
  * make connections in 2 different directions, o and p
  * start by making 10 connections to o
- * o is presumed to be a putsh/a
+ * o is presumed to be a cranker/a
  * when data arrives on one of the connections
   * make a connection to p
   * send the data there
@@ -52,7 +52,7 @@ Download from http://example.com/FIXME.
 
 FIXME: explanation
 
-    $ java -jar putsh-0.1.0-standalone.jar [args]
+    $ java -jar cranker-0.1.0-standalone.jar [args]
 
 ## Options
 
