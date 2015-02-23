@@ -7,6 +7,7 @@ Avoid orchestration by reversing the polairty of your infrastructure.
 * need to test sending a bunch of data
 * the load balancer side and the app server side need to start independently
 * we need to be able to turn the test mode on
+* and select the mode: test, loadbal or appserver
 * the app server side needs to wait
 * implement HTTP proxying better
  * adding proxy header in correct circumstances
