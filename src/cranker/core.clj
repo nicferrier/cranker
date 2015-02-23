@@ -1,4 +1,4 @@
-(ns putsh.core
+(ns cranker.core
   "cranker - connection HTTP in reverse for better scaling."
   (:gen-class)
   (:require [clojure.string :as str])
@@ -166,6 +166,7 @@ Returns a promise which we might wait on."
   (thread
    (let [ch (chan)
          sockets (doseq [n (range number)]  (cranker-make-ws ch cranker-lb))]
+     (debug "cranker-connector: started cranker")
      (go-loop
       [[socket data] (<! ch)] ;; data is the http request
       (let [request (try (json/read-str data) (catch Exception e { :json-error e }))
@@ -205,6 +206,7 @@ channel."
   (thread
    (let [stops [(http-server/run-server cranker-server { :port cranker-port })
                 (http-server/run-server lb-server { :port lb-port })]]
+     (debug "start-lb: started load balancer")
      (loop [[msg & args] (<!! ctrl)]
        (when
            (case msg
@@ -262,20 +264,30 @@ channel."
   (timbre/set-config! [:timestamp-pattern] "yyyy-MM-dd HH:mm:ss")
   (timbre/set-level! :info)
   (let [mode :test
-        app-server app-server-default
-        lb-prox lb-server-default
         lb-ctrl (chan)
         ap-ctrl (chan)
-        lb-chan (start-lb lb-ctrl)
-        approx-chan (cranker-connector ap-ctrl app-server lb-prox 10)]
+        app-server app-server-default
+        lb-prox lb-server-default
+        service-channels
+        (case mode
+          :test
+          { (start-lb lb-ctrl) :lb
+            (cranker-connector
+             ap-ctrl app-server lb-prox 10) :approx }
+          :lb
+          { (start-lb lb-ctrl) :lb }
+          :approx
+          { (cranker-connector
+             ap-ctrl app-server lb-prox 10) :approx })]
     ;; Tests
-    (when (= mode :test) (test-lb lb-ctrl ap-ctrl))
-    (let [[end & args] (alts!! [approx-chan lb-chan])]
-      (debug "-main stopped "
-             end 
-             (<!! (case end
-                    :lb-ended approx-chan
-                    :approx-ended lb-chan))))
+    (when (= mode :test)
+      (test-lb lb-ctrl ap-ctrl))
+    ;; Collect the endings of the things as they signal the service-channel threads
+    (loop [channels service-channels]
+      (when (not-empty channels)
+        (let [chans (keys channels)
+              [end ch] (alts!! chans)]
+          (recur (dissoc channels ch)))))
     (info "end")
     (System/exit 0)))
 
