@@ -1,6 +1,7 @@
 (ns cranker.core
   "cranker - connection HTTP in reverse for better scaling."
   (:gen-class)
+  (:require [clojure.test :refer :all])
   (:require [clojure.string :as str])
   (:require
    [clojure.core.async
@@ -11,7 +12,8 @@
   (:require [gniazdo.core :as ws])
   (:require [clojure.data.json :as json])
   (:require [clojure.walk])
-  (:require [org.httpkit.server :as http-server]))
+  (:require [org.httpkit.server :as http-server])
+  (:import [java.io File FileOutputStream]))
 
 (defn cranker-formatter
   "A log formatter."
@@ -31,23 +33,26 @@ This is test code to allow us to run all our tests internally.
 `status', `headers' and `body-regex' are values to use to do
 assertions on. If present the assertions are performed."
   [address &{ :keys [data
+                     id
+                     multipart
                      method
                      status-assert
                      headers-assert
                      body-regex-assert]}]
   (let [response @(if (= method :post)
                     (do
-                      (info "lb-http-request the data is: " data)
+                      (when data (info id "lb-http-request the data is: " data))
+                      (when multipart (info id "lb-http-request the multipart is: " multipart))
                       (http-client/post
                        address
-                       { :method :post :form-params data }))
+                       { :method :post :query-params data :multipart multipart }))
                     ;; Else get
                     (http-client/get address))
         { :keys [status headers body] } response]
     #_()
-    (info (format "lb-request[%s][status]: %s" address status))
-    (info (format "lb-request[%s][headers]: %s" address headers))
-    (info (format "lb-request[%s][body]: %s" address body))
+    (info id (format "lb-http-request[%s][status]: %s" address status))
+    (info id (format "lb-http-request[%s][headers]: %s" address headers))
+    (info id (format "lb-http-request[%s][body]: %s" address body))
     (do
       (when status-assert
         (assert (== status-assert status)))
@@ -85,16 +90,17 @@ either nil or a committed load balancer channel."
 
 (defn frame
   "Frame an http-kit request into JSON." [request]
-  (let [{ method :request-method headers :headers
-         uri :uri query :query-string body :body } request]
+  (let [{ :keys [request-method headers uri query-string form-data body]} request
+        ;;{ method :request-method headers :headers  uri :uri query :query-string body :body } request
+        ]
+    (info "frame " uri request-method headers query-string form-data body request)
     { :http-request
      { :uri uri
-      :method method
+      :method request-method
       :headers headers
-      :query-string query
       :body (if (= (type body) org.httpkit.BytesInputStream)
               (slurp body)
-              body) }}))
+              (or body query-string)) }}))
 
 (defn de-frame 
   "De-frame a JSON response into an http-kit response."
@@ -109,18 +115,21 @@ either nil or a committed load balancer channel."
 
 Requests are sent over the first free cranker websocket.  We wrap the
 initial HTTP request up in a JSON structure and send it over the
-channel established by `cranker-server'." [request]
+channel established by `cranker-server'."
+  [request]
   (http-server/with-channel request channel
+    (info "lb-server request " request)
     (http-server/on-close channel (fn [status] (debug "lb-server closed " status)))
     (http-server/on-receive
      channel (fn [data] ; get the cranker channel from @channels and send it the data
                (warn "lb-server data from a lb con: " data)))
     (let [first-free (first (filter #(nil? (% 1)) @channels))
-          cranker-chan (when first-free (first-free 0))]
+          cranker-chan (when first-free (first-free 0))
+          framed-req (frame request)]
       (when cranker-chan
         (dosync (alter channels assoc cranker-chan channel))
-        (http-server/send!
-         cranker-chan (json/write-str (frame request)))))))
+        (info "lb-server sending to cranker " framed-req)
+        (http-server/send! cranker-chan (json/write-str framed-req))))))
 
 (defn cranker-server
   "Handle requests from the app-server side of cranker.
@@ -177,7 +186,8 @@ Returns a promise which we might wait on."
           (let [{ :strs [uri method headers body] } http-request
                 ;; need to test if app-server-uri ends in /
                 request-uri (str app-server-uri (or uri "/"))]
-            (info "cranker-connector ws uri: " request-uri "[" method "] {" body "}")
+            (info "cranker-connector ws uri: "
+                  request-uri "[" method "] {" body "} <" request ">")
             (http-client/request
              { :url request-uri :method (keyword method)
               :headers headers :body body
@@ -192,7 +202,7 @@ Returns a promise which we might wait on."
                (:stop (do (doseq [socket sockets] (ws/close socket))
                           true)))
          (recur (<!! ctrl)))))
-   :approx-ended))
+   :app-prox-ended))
 
 (defn start-lb
   "Start the load balancer side of cranker.
@@ -221,13 +231,42 @@ channel."
 (def app-server-default "http://localhost:8003")
 (def lb-server-default "ws://localhost:8000")
 
+(defn ^File gen-tempfile
+  "Generate a tempfile, the file will be deleted before jvm shutdown."
+  ([size extension]
+     (let [string-80k
+           (fn []
+             (apply
+              str
+              (map char
+                   (take (* 8 1024)
+                         (apply concat (repeat (range (int \a) (int \z))))))))
+           const-string (let [tmp (string-80k)]
+                          (apply str (repeat 1024 tmp)))
+           tmp (doto (File/createTempFile "tmp_" extension)
+                 (.deleteOnExit))]
+       (with-open [w (FileOutputStream. tmp)]
+         (.write w ^bytes (.getBytes (subs const-string 0 size))))
+       tmp)))
+
 (defn test-lb [lb-ctrl ap-ctrl]
   (let [fake-appserv-stop (http-server/run-server appserv-handler { :port 8003 })]
     (thread
      (Thread/sleep 1000)
+     ;; Multipart request
+     (lb-http-request
+      "http://localhost:8003/blah"
+      :id "straight#1"
+      :data { :a 1 :b 2 }
+      :multipart [{ :name "image" :content (gen-tempfile 5000 ".jpg")}]
+      :method :post
+      :status-assert 200
+      :headers-assert { :server "http-kit" }
+      :body-regex-assert #"<h1>my fake.*")
      ;; Show that the direct request works
      (lb-http-request
       "http://localhost:8003/blah"
+      :id "straight#2"
       :data { :a 1 :b 2 }
       :method :post
       :status-assert 200
@@ -242,12 +281,14 @@ channel."
      ;;  uploaded files
      (lb-http-request
       "http://localhost:8001/blah"
+      :id "cranker#1"
       :status-assert 200
       :headers-assert { :server "http-kit" }
       :body-regex-assert #"<h1>my fake.*</h1>$")
      ;; Show that a putch request with data works
      (lb-http-request
       "http://localhost:8001/blah"
+      :id "cranker#2"
       :data { "a" 1 "b" 2 }
       :method :post
       :status-assert 200
@@ -273,12 +314,12 @@ channel."
           :test
           { (start-lb lb-ctrl) :lb
             (cranker-connector
-             ap-ctrl app-server lb-prox 10) :approx }
+             ap-ctrl app-server lb-prox 10) :app-prox }
           :lb
           { (start-lb lb-ctrl) :lb }
-          :approx
+          :app-prox
           { (cranker-connector
-             ap-ctrl app-server lb-prox 10) :approx })]
+             ap-ctrl app-server lb-prox 10) :app-prox })]
     ;; Tests
     (when (= mode :test)
       (test-lb lb-ctrl ap-ctrl))
