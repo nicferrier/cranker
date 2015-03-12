@@ -9,7 +9,7 @@
                  ;;[org.clojure/tools.logging "0.2.6"]
                  [stylefruits/gniazdo "0.3.0"]
                  [org.clojure/data.json "0.2.5"]
-                 [http-kit "2.1.6"]]
+                 [http-kit "2.1.19"]]
   ;;:main ^:skip-aot cranker.core
   :main cranker.core
   :target-path "target/%s"
