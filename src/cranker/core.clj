@@ -3,6 +3,7 @@
   (:gen-class)
   (:require [clojure.test :refer :all])
   (:require [clojure.string :as str])
+  (:require [clojure.pprint :as pp])
   (:require
    [clojure.core.async
     :refer [>! <! >!! <!! go go-loop chan close!  alts! alts!! timeout thread]])
@@ -23,43 +24,64 @@
           (or message "")
           (or (timbre/stacktrace throwable "\n" ) "")))
 
+(defn trunc-str [s c]
+  (if (> (count s) c)
+    (str (subs s 0 c) "...")
+    s))
+
 (defn lb-http-request
   "Make a request to the fake load balancer.
 
 This is test code to allow us to run all our tests internally.
 
-`address' is the http address to talk to.
+`address' is the http address to talk to. 
+
+`query-params' is a query string.
+
+`form-data' is POST form data to pass, mutually exclusive with
+`multipart'???
+
+`multipart' is a file to pass.
+
 
 `status', `headers' and `body-regex' are values to use to do
 assertions on. If present the assertions are performed."
-  [address &{ :keys [data
-                     id
+  [address &{ :keys [query-params
+                     form-params
                      multipart
+                     id
                      method
                      status-assert
                      headers-assert
                      body-regex-assert]}]
   (let [response @(if (= method :post)
                     (do
-                      (when data (info id "lb-http-request the data is: " data))
-                      (when multipart (info id "lb-http-request the multipart is: " multipart))
-                      (http-client/post
-                       address
-                       { :method :post :query-params data :multipart multipart }))
+                      (when form-params
+                        (info id "lb-http-request the form-params are: " form-params))
+                      (when multipart
+                        (info id (format "lb-http-request the multipart is: %s" multipart)))
+                      (http-client/request
+                       {:url address
+                        :method :post
+                        :query-params query-params
+                        :form-params form-params
+                        :multipart multipart } nil))
                     ;; Else get
-                    (http-client/get address))
+                    (http-client/get address { :query-params query-params }))
         { :keys [status headers body] } response]
-    #_()
     (info id (format "lb-http-request[%s][status]: %s" address status))
     (info id (format "lb-http-request[%s][headers]: %s" address headers))
-    (info id (format "lb-http-request[%s][body]: %s" address body))
+    (info id (format "lb-http-request[%s][body]: %s" address (trunc-str body 40)))
     (do
       (when status-assert
         (assert (== status-assert status)))
       (when headers-assert
-        (doall (map (fn [[k v]] (when (headers k) (assert (= (headers k) v))))
+        (doall (map (fn [[k v]]
+                      (info id "headers [" k "] == " v " -> " (pp/cl-format nil "~s" (headers k)))
+                      (when (headers k) (assert (= (headers k) v))))
                     headers-assert)))
       (when body-regex-assert
+        (debug (pp/cl-format nil "~s" body-regex-assert))
         (assert (re-matches body-regex-assert body))))))
 
 (defn appserv-handler
@@ -128,7 +150,7 @@ channel established by `cranker-server'."
           framed-req (frame request)]
       (when cranker-chan
         (dosync (alter channels assoc cranker-chan channel))
-        (info "lb-server sending to cranker " framed-req)
+        (info "lb-server sending to cranker " (trunc-str (str framed-req) 50))
         (http-server/send! cranker-chan (json/write-str framed-req))))))
 
 (defn cranker-server
@@ -187,7 +209,7 @@ Returns a promise which we might wait on."
                 ;; need to test if app-server-uri ends in /
                 request-uri (str app-server-uri (or uri "/"))]
             (info "cranker-connector ws uri: "
-                  request-uri "[" method "] {" body "} <" request ">")
+                  request-uri "[" method "] {" (trunc-str body 10) "}")
             (http-client/request
              { :url request-uri :method (keyword method)
               :headers headers :body body
@@ -250,28 +272,38 @@ channel."
        tmp)))
 
 (defn test-lb [lb-ctrl ap-ctrl]
-  (let [fake-appserv-stop (http-server/run-server appserv-handler { :port 8003 })]
+  (let [fake-appserv-stop (http-server/run-server appserv-handler { :port 8003 })
+        tempfile (gen-tempfile 5000 ".jpg")]
     (thread
      (Thread/sleep 1000)
      ;; Multipart request
      (lb-http-request
       "http://localhost:8003/blah"
       :id "straight#1"
-      :data { :a 1 :b 2 }
-      :multipart [{ :name "image" :content (gen-tempfile 5000 ".jpg")}]
+      :form-params { :a 1 :b 2 }
+      ;; Looks to me like multipart is not supported by http-kit/client
+      ;; check the http-client code
+      ;; FIXME - looks like it's just out version!!!
+      :multipart [{ :name "image" :content tempfile}]
       :method :post
       :status-assert 200
-      :headers-assert { :server "http-kit" }
-      :body-regex-assert #"<h1>my fake.*")
+      :headers-assert { :server "fake-appserver-0.0.1,http-kit" }
+      :body-regex-assert #"<h1>my fake.*<div>-+HttpKitFormBoundary.*\r
+Content-Disposition: form-data; name=\"image\"\r
+.*\r
+.*\r
+.*\r
+.*\r
+</div>")
      ;; Show that the direct request works
      (lb-http-request
       "http://localhost:8003/blah"
       :id "straight#2"
-      :data { :a 1 :b 2 }
+      :form-params { :a 1 :b 2 }
       :method :post
       :status-assert 200
-      :headers-assert { :server "http-kit" }
-      :body-regex-assert #"<h1>my fake.*")
+      :headers-assert { :server "fake-appserver-0.0.1,http-kit" }
+      :body-regex-assert #"<h1>my fake.*<div>b=2&a=1</div>")
      ;; Show a cranker request works - we actually need a ton of
      ;; different requests here
      
@@ -283,17 +315,35 @@ channel."
       "http://localhost:8001/blah"
       :id "cranker#1"
       :status-assert 200
-      :headers-assert { :server "http-kit" }
+      :headers-assert { :server "fake-appserver-0.0.1,http-kit,http-kit" }
       :body-regex-assert #"<h1>my fake.*</h1>$")
-     ;; Show that a putch request with data works
+
+     ;; Show that a cranker request with data works
      (lb-http-request
       "http://localhost:8001/blah"
       :id "cranker#2"
-      :data { "a" 1 "b" 2 }
+      :form-params { "a" 1 "b" 2 }
       :method :post
       :status-assert 200
-      :headers-assert { :server "http-kit" }
-      :body-regex-assert #"<h1>my fake.*</h1><div>a=1&b=2</div>$"))
+      :headers-assert { :server "fake-appserver-0.0.1,http-kit,http-kit" }
+      :body-regex-assert #"<h1>my fake.*</h1><div>a=1&b=2</div>$")
+
+     ;; And now cranker with a file...
+     (lb-http-request
+      "http://localhost:8001/blah"
+      :id "cranker#3"
+      :multipart [{ :name "image" :content tempfile}]
+      :form-params { "a" 1 "b" 2 }
+      :method :post
+      :status-assert 200
+      :headers-assert { :server "fake-appserver-0.0.1,http-kit,http-kit" }
+      :body-regex-assert #"<h1>my fake.*<div>-+HttpKitFormBoundary.*\r
+Content-Disposition: form-data; name=\"image\"\r
+.*\r
+.*\r
+.*\r
+.*\r
+</div>"))
     (Thread/sleep 2000)
     (fake-appserv-stop)
     (>!! lb-ctrl [:stop])
