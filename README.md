@@ -65,6 +65,10 @@ HTTP requests with cranker:
  * return the response encoded over the websocket
 
 
+Websockets with cranker:
+
+![cranker for websockets](cranker-websockets.png)
+
 ## Installation
 
 Download from http://example.com/FIXME.
