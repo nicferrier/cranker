@@ -4,10 +4,26 @@ Avoid orchestration by reversing the polairty of your infrastructure.
 
 ## todo
 
+* websockets over websockets
+ * seems like we need some framing
+ * but the client websocket could be tied to a cranker websocket
+* ability to use one cranker-lb for multiple services
+ * when approx connects to lb have it send some service identification
+ * and then cranker lb should keep a websocket pool per-service id
+ * load balancers could send traffic to that with http headers or paths
+  * if it was a header then the approx could use the same header
+    * when approx makes the websocket send X-Service-Id: my-service
+    * configure the loadbalancer to send to cranker-ln with X-Service-Id: my-service
+* weights
+ * have cranker approx connect to multiple cranker lbs
+ * but associate them with a weight
+ * so if cranker approx knows lb xxx is in another datacenter it can cost it more
+ * the cost is sent with the approx websocket creation
+ * so now cranker lb knows what cost to apply
 * need to test sending a bunch of data
 * the load balancer side and the app server side need to start independently
-* we need to be able to turn the test mode on
-* and select the mode: test, loadbal or appserver
+ * we need to be able to turn the test mode on
+ * and select the mode: test, loadbal or appserver
 * the app server side needs to wait
 * implement HTTP proxying better
  * adding proxy header in correct circumstances
@@ -32,10 +48,14 @@ We have both ends of cranker coded
  
 ## how it works
 
-* cranker/a runs near your load balancer - there should be 1 of this
- * listen to 2 sockets, x and y
- * receive connections from the load balancer on x
- * receive connections from cranker/b on y
+HTTP requests with cranker:
+
+![cranker for http](cranker-http-request.png)
+
+* a single cranker/a runs near your load balancer, where it can have a fixed address
+ * it listens to 2 sockets, x and y
+ * receives connections from the load balancer on x
+ * receives websocket connections from cranker/b on y
   * these will arrive in lumps
   * when a cranker-connector starts it tries to connect a lot of sockets
 * cranker/b runs near your app server
